@@ -1,0 +1,98 @@
+import time
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+
+learning_rates = [1e-2, 1e-3, 1e-4]
+lr_results = []
+lr_histories = {}
+
+for lr in learning_rates:
+    lr_label = f"{lr:.0e}"  # Hiển thị dạng 1e-02, 1e-03, 1e-04
+    print(f"\n{'='*60}\nĐang huấn luyện với learning_rate = {lr_label}\n{'='*60}")
+    
+    # Reset session và seed để đảm bảo khởi tạo trọng số giống nhau
+    tf.keras.backend.clear_session()
+    random.seed(SEED)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
+    
+    model_lr = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(28, 28)),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(256, activation="relu"),
+        tf.keras.layers.Dense(128, activation="relu"),
+        tf.keras.layers.Dense(10, activation="softmax")
+    ])
+    
+    model_lr.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        metrics=["accuracy"]
+    )
+    
+    early_stop = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss",
+        patience=3,
+        restore_best_weights=True
+    )
+    
+    start_time = time.time()
+    hist = model_lr.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=40,
+        callbacks=[early_stop],
+        verbose=0
+    )
+    train_time = time.time() - start_time
+    lr_histories[lr_label] = hist.history
+    
+    best_epoch_idx = int(np.argmin(hist.history["val_loss"]))
+    best_val_loss = hist.history["val_loss"][best_epoch_idx]
+    best_val_acc = hist.history["val_accuracy"][best_epoch_idx]
+    stopped_epoch = len(hist.history["loss"])
+    
+    test_loss, test_acc = model_lr.evaluate(test_ds, verbose=0)
+    
+    lr_results.append({
+        "Learning Rate": lr_label,
+        "Số Epoch chạy": f"{stopped_epoch} (Tốt nhất: {best_epoch_idx + 1})",
+        "Thời gian train (s)": round(train_time, 2),
+        "Best Val Loss": round(best_val_loss, 4),
+        "Best Val Accuracy": round(best_val_acc, 4),
+        "Test Accuracy": round(test_acc, 4)
+    })
+
+# Bảng tổng hợp kết quả
+lr_df = pd.DataFrame(lr_results)
+display(lr_df)
+
+# Trực quan hóa Learning Curves (Loss & Accuracy) cho từng Learning Rate
+fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+
+for col, (lr_label, h) in enumerate(lr_histories.items()):
+    epochs_range = range(1, len(h["loss"]) + 1)
+    
+    # Hàng 1: Loss curves
+    axes[0, col].plot(epochs_range, h["loss"], label="Train loss")
+    axes[0, col].plot(epochs_range, h["val_loss"], label="Validation loss")
+    axes[0, col].set_title(f"Loss Curve (lr = {lr_label})")
+    axes[0, col].set_xlabel("Epoch")
+    axes[0, col].set_ylabel("Loss")
+    axes[0, col].legend()
+    axes[0, col].grid(alpha=0.3)
+    
+    # Hàng 2: Accuracy curves
+    axes[1, col].plot(epochs_range, h["accuracy"], label="Train accuracy")
+    axes[1, col].plot(epochs_range, h["val_accuracy"], label="Validation accuracy")
+    axes[1, col].set_title(f"Accuracy Curve (lr = {lr_label})")
+    axes[1, col].set_xlabel("Epoch")
+    axes[1, col].set_ylabel("Accuracy")
+    axes[1, col].legend()
+    axes[1, col].grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
