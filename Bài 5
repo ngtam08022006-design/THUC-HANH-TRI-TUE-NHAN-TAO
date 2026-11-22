@@ -1,0 +1,104 @@
+import time
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+
+def build_mlp_l2(l2_lambda=0.0):
+    reg = tf.keras.regularizers.l2(l2_lambda) if l2_lambda > 0 else None
+    
+    model = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(28, 28)),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(256, activation="relu", kernel_regularizer=reg),
+        tf.keras.layers.Dense(128, activation="relu", kernel_regularizer=reg),
+        tf.keras.layers.Dense(10, activation="softmax", kernel_regularizer=reg)
+    ])
+    
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        metrics=["accuracy"]
+    )
+    return model
+
+l2_configs = {
+    "Baseline (Không L2)": 0.0,
+    "L2 (1e-4)": 1e-4,
+    "L2 (1e-3)": 1e-3,
+    "L2 (1e-2)": 1e-2
+}
+
+l2_results = []
+l2_histories = {}
+
+for name, lam in l2_configs.items():
+    print(f"\n{'='*60}\nĐang huấn luyện: {name}\n{'='*60}")
+    
+    tf.keras.backend.clear_session()
+    random.seed(SEED)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
+    
+    model_l2 = build_mlp_l2(l2_lambda=lam)
+    
+    early_stop = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss",
+        patience=3,
+        restore_best_weights=True
+    )
+    
+    start_time = time.time()
+    hist = model_l2.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=40,
+        callbacks=[early_stop],
+        verbose=0
+    )
+    train_time = time.time() - start_time
+    l2_histories[name] = hist.history
+    
+    # Chỉ số tại epoch tốt nhất (val_loss thấp nhất)
+    best_idx = int(np.argmin(hist.history["val_loss"]))
+    best_train_acc = hist.history["accuracy"][best_idx]
+    best_val_acc = hist.history["val_accuracy"][best_idx]
+    acc_gap = best_train_acc - best_val_acc
+    
+    # Tính chuẩn L2 của toàn bộ ma trận trọng số để kiểm tra mức độ co trọng số
+    weight_l2_norm = np.sqrt(sum(np.sum(np.square(w)) for w in model_l2.trainable_weights if len(w.shape) == 2))
+    
+    test_loss, test_acc = model_l2.evaluate(test_ds, verbose=0)
+    
+    l2_results.append({
+        "Cấu hình": name,
+        "Epoch dừng (Tốt nhất)": f"{len(hist.history['loss'])} ({best_idx + 1})",
+        "Train Acc (Best)": round(best_train_acc, 4),
+        "Val Acc (Best)": round(best_val_acc, 4),
+        "Gap (Train - Val)": round(acc_gap, 4),
+        "Weight L2 Norm": round(float(weight_l2_norm), 2),
+        "Test Accuracy": round(test_acc, 4)
+    })
+
+# Hiển thị bảng tổng hợp kết quả
+l2_df = pd.DataFrame(l2_results)
+display(l2_df)
+
+# Trực quan hóa Accuracy Curves cho từng mức L2
+fig, axes = plt.subplots(1, 4, figsize=(18, 4.5), sharey=True)
+
+for idx, (name, h) in enumerate(l2_histories.items()):
+    epochs_range = range(1, len(h["accuracy"]) + 1)
+    axes[idx].plot(epochs_range, h["accuracy"], label="Train accuracy")
+    axes[idx].plot(epochs_range, h["val_accuracy"], label="Validation accuracy")
+    axes[idx].fill_between(epochs_range, h["val_accuracy"], h["accuracy"], alpha=0.15)
+    axes[idx].set_title(name)
+    axes[idx].set_xlabel("Epoch")
+    if idx == 0:
+        axes[idx].set_ylabel("Accuracy")
+    axes[idx].legend(loc="lower right")
+    axes[idx].grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
