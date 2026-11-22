@@ -1,0 +1,117 @@
+import time
+import math
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+
+batch_sizes = [32, 128, 512]
+bs_results = []
+bs_histories = {}
+
+for bs in batch_sizes:
+    print(f"\n{'='*60}\nĐang huấn luyện với BATCH_SIZE = {bs}\n{'='*60}")
+
+    # Reset session và seed để đảm bảo khởi tạo trọng số giống nhau
+    tf.keras.backend.clear_session()
+    random.seed(SEED)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
+
+    # Tạo lại pipeline tf.data với batch_size tương ứng sử dụng đúng tên biến viết thường
+    train_ds_exp = (
+        tf.data.Dataset.from_tensor_slices((x_train, y_train))
+        .shuffle(buffer_size=len(x_train), seed=SEED)
+        .batch(bs)
+        .prefetch(tf.data.AUTOTUNE)
+    )
+    val_ds_exp = (
+        tf.data.Dataset.from_tensor_slices((x_val, y_val))
+        .batch(bs)
+        .prefetch(tf.data.AUTOTUNE)
+    )
+    test_ds_exp = (
+        tf.data.Dataset.from_tensor_slices((x_test, y_test))
+        .batch(bs)
+        .prefetch(tf.data.AUTOTUNE)
+    )
+
+    model_bs = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(28, 28)),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(256, activation="relu"),
+        tf.keras.layers.Dense(128, activation="relu"),
+        tf.keras.layers.Dense(10, activation="softmax")
+    ])
+
+    model_bs.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        metrics=["accuracy"]
+    )
+
+    early_stop = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss",
+        patience=3,
+        restore_best_weights=True
+    )
+
+    start_time = time.time()
+    hist = model_bs.fit(
+        train_ds_exp,
+        validation_data=val_ds_exp,
+        epochs=40,
+        callbacks=[early_stop],
+        verbose=0
+    )
+    total_time = time.time() - start_time
+    bs_histories[bs] = hist.history
+
+    stopped_epoch = len(hist.history["loss"])
+    time_per_epoch = total_time / stopped_epoch
+    steps_per_epoch = math.ceil(len(x_train) / bs)
+
+    best_epoch_idx = int(np.argmin(hist.history["val_loss"]))
+    best_val_loss = hist.history["val_loss"][best_epoch_idx]
+    best_val_acc = hist.history["val_accuracy"][best_epoch_idx]
+
+    test_loss, test_acc = model_bs.evaluate(test_ds_exp, verbose=0)
+
+    bs_results.append({
+        "Batch Size": bs,
+        "Steps / Epoch": steps_per_epoch,
+        "Số Epoch chạy": f"{stopped_epoch} (Tốt nhất: {best_epoch_idx + 1})",
+        "Tổng thời gian (s)": round(total_time, 2),
+        "Thời gian / Epoch (s)": round(time_per_epoch, 2),
+        "Best Val Loss": round(best_val_loss, 4),
+        "Best Val Accuracy": round(best_val_acc, 4),
+        "Test Accuracy": round(test_acc, 4)
+    })
+
+# Hiển thị bảng tổng hợp kết quả
+bs_df = pd.DataFrame(bs_results)
+display(bs_df)
+
+# Trực quan hóa Validation Loss và Validation Accuracy theo Epoch
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+for bs, h in bs_histories.items():
+    epochs_range = range(1, len(h["val_loss"]) + 1)
+    axes[0].plot(epochs_range, h["val_loss"], marker="o", label=f"Batch size = {bs}")
+    axes[1].plot(epochs_range, h["val_accuracy"], marker="o", label=f"Batch size = {bs}")
+
+axes[0].set_title("So sánh Validation Loss theo Batch Size")
+axes[0].set_xlabel("Epoch")
+axes[0].set_ylabel("Validation Loss")
+axes[0].legend()
+axes[0].grid(alpha=0.3)
+
+axes[1].set_title("So sánh Validation Accuracy theo Batch Size")
+axes[1].set_xlabel("Epoch")
+axes[1].set_ylabel("Validation Accuracy")
+axes[1].legend()
+axes[1].grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
