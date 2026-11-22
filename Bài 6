@@ -1,0 +1,82 @@
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+
+# Khai báo class_names cho tập MNIST
+class_names = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+
+# Khôi phục mô hình tốt nhất đã lưu ở các bước trước (nếu file tồn tại) để đảm bảo dùng đúng trọng số chuẩn
+if os.path.exists("best_mlp_fashion.keras"):
+    eval_model = tf.keras.models.load_model("best_mlp_fashion.keras")
+elif 'model_l2' in globals():
+    eval_model = model_l2
+elif 'model_do' in globals():
+    eval_model = model_do
+else:
+    eval_model = model_bs
+
+# 1. Dự đoán xác suất và nhãn lớp trên toàn bộ tập Test (sử dụng x_test viết thường)
+y_prob = eval_model.predict(x_test, verbose=0)
+y_pred = np.argmax(y_prob, axis=1)
+
+# 2. Lọc ra toàn bộ các chỉ số dự đoán sai (sử dụng y_test viết thường)
+wrong_indices = np.where(y_pred != y_test)[0]
+print(f"Tổng số mẫu dự đoán sai trên tập Test: {len(wrong_indices)} / {len(y_test)}")
+
+# 3. Lấy độ tự tin (xác suất cao nhất) của mô hình tại các mẫu dự đoán sai
+wrong_confidences = y_prob[wrong_indices, y_pred[wrong_indices]]
+
+# 4. Sắp xếp giảm dần theo confidence và lấy Top 20
+top20_order = np.argsort(wrong_confidences)[::-1][:20]
+top20_indices = wrong_indices[top20_order]
+
+# 5. Tạo bảng thống kê chi tiết 20 mẫu sai tự tin nhất
+error_records = []
+for rank, idx in enumerate(top20_indices, start=1):
+    true_id = int(y_test[idx])
+    pred_id = int(y_pred[idx])
+    error_records.append({
+        "Hạng": rank,
+        "Test Index": idx,
+        "Nhãn thật (True)": class_names[true_id],
+        "Dự đoán (Pred)": class_names[pred_id],
+        "Confidence (Pred)": round(float(y_prob[idx, pred_id]), 4),
+        "Xác suất nhãn thật": round(float(y_prob[idx, true_id]), 4)
+    })
+
+top20_df = pd.DataFrame(error_records)
+display(top20_df)
+
+# Thống kê các cặp nhầm lẫn phổ biến nhất trong Top 20
+pair_counts = (
+    top20_df.groupby(["Nhãn thật (True)", "Dự đoán (Pred)"])
+    .size()
+    .reset_index(name="Số lần xuất hiện")
+    .sort_values("Số lần xuất hiện", ascending=False)
+)
+print("\nCác cặp nhầm lẫn xuất hiện nhiều nhất trong Top 20 lỗi tự tin cao:")
+display(pair_counts)
+
+# 6. Trực quan hóa 20 mẫu dự đoán sai có confidence cao nhất (lưới 4x5)
+fig, axes = plt.subplots(4, 5, figsize=(14, 11))
+
+for rank, (idx, ax) in enumerate(zip(top20_indices, axes.ravel()), start=1):
+    true_label = class_names[y_test[idx]]
+    pred_label = class_names[y_pred[idx]]
+    conf = y_prob[idx, y_pred[idx]]
+
+    ax.imshow(x_test[idx], cmap="gray")
+    ax.set_title(
+        f"#{rank} (idx={idx})\n"
+        f"True: {true_label}\n"
+        f"Pred: {pred_label} ({conf:.4f})",
+        fontsize=9,
+        color="darkred"
+    )
+    ax.axis("off")
+
+plt.suptitle("Top 20 mẫu dự đoán sai với Confidence cao nhất (MLP - MNIST)", fontsize=13, fontweight="bold")
+plt.tight_layout()
+plt.show()
