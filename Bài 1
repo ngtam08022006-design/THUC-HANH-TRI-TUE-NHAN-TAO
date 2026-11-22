@@ -1,0 +1,125 @@
+import time
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+
+# Định nghĩa biến SEED để cố định tính ngẫu nhiên
+SEED = 42
+
+# Thiết lập seed toàn cục để đảm bảo quá trình chia dữ liệu đồng nhất
+random.seed(SEED)
+np.random.seed(SEED)
+tf.random.set_seed(SEED)
+
+# Tải dữ liệu MNIST và tự động chuẩn bị train_ds, val_ds, test_ds
+(x_train_full, y_train_full), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
+
+# Chuẩn hóa dữ liệu ảnh về đoạn [0, 1]
+x_train_full = x_train_full / 255.0
+x_test = x_test / 255.0
+
+# Chia tập train_full thành Train và Validation (lấy 10000 ảnh làm Validation)
+val_size = 10000
+x_val = x_train_full[:val_size]
+y_val = y_train_full[:val_size]
+
+x_train = x_train_full[val_size:]
+y_train = y_train_full[val_size:]
+
+# Tạo tf.data.Dataset để tối ưu hiệu năng huấn luyện giống như bài học
+BATCH_SIZE = 64
+train_ds = tf.data.Dataset.from_tensor_slices((x_train, y_train)).shuffle(buffer_size=10000, seed=SEED).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+val_ds = tf.data.Dataset.from_tensor_slices((x_val, y_val)).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+test_ds = tf.data.Dataset.from_tensor_slices((x_test, y_test)).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+
+# Định nghĩa 3 kiến trúc MLP cần so sánh
+architectures = {
+    "1 Hidden Layer (256)": [256],
+    "2 Hidden Layers (256 -> 128)": [256, 128],       # Kiến trúc gốc trong bài
+    "3 Hidden Layers (256 -> 128 -> 64)": [256, 128, 64]
+}
+
+def build_mlp(hidden_units):
+    layers = [
+        tf.keras.layers.Input(shape=(28, 28)),
+        tf.keras.layers.Flatten()
+    ]
+    for units in hidden_units:
+        layers.append(tf.keras.layers.Dense(units, activation="relu"))
+    layers.append(tf.keras.layers.Dense(10, activation="softmax"))
+
+    model = tf.keras.Sequential(layers)
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        metrics=["accuracy"]
+    )
+    return model
+
+results = []
+histories = {}
+
+for name, units in architectures.items():
+    print(f"\n{'='*60}\nĐang huấn luyện mô hình: {name}\n{'='*60}")
+
+    # Reset session và seed để đảm bảo tính tái lập công bằng giữa các mô hình
+    tf.keras.backend.clear_session()
+    random.seed(SEED)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
+
+    model_exp = build_mlp(units)
+    total_params = model_exp.count_params()
+
+    early_stop = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss",
+        patience=3,
+        restore_best_weights=True
+    )
+
+    # Đo thời gian huấn luyện
+    start_time = time.time()
+    hist = model_exp.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=40,
+        callbacks=[early_stop],
+        verbose=0
+    )
+    train_time = time.time() - start_time
+    histories[name] = hist.history
+
+    # Lấy chỉ số tại epoch tốt nhất (val_loss thấp nhất do restore_best_weights=True)
+    best_epoch_idx = int(np.argmin(hist.history["val_loss"]))
+    best_val_acc = hist.history["val_accuracy"][best_epoch_idx]
+    best_val_loss = hist.history["val_loss"][best_epoch_idx]
+    stopped_epoch = len(hist.history["loss"])
+
+    # Đánh giá trên tập Test
+    test_loss, test_acc = model_exp.evaluate(test_ds, verbose=0)
+
+    results.append({
+        "Kiến trúc": name,
+        "Số Parameter": total_params,
+        "Số Epoch chạy": f"{stopped_epoch} (Tốt nhất: {best_epoch_idx + 1})",
+        "Thời gian train (s)": round(train_time, 2),
+        "Best Val Accuracy": round(best_val_acc, 4),
+        "Test Accuracy": round(test_acc, 4)
+    })
+
+# Hiển thị bảng tổng hợp kết quả
+comparison_df = pd.DataFrame(results)
+display(comparison_df)
+
+# Trực quan hóa Validation Accuracy theo Epoch của 3 kiến trúc
+plt.figure(figsize=(9, 5))
+for name, h in histories.items():
+    plt.plot(range(1, len(h["val_accuracy"]) + 1), h["val_accuracy"], marker="o", label=name)
+plt.xlabel("Epoch")
+plt.ylabel("Validation Accuracy")
+plt.title("So sánh Validation Accuracy giữa các kiến trúc MLP")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.show()
